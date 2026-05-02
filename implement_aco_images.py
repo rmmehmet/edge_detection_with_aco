@@ -6,7 +6,7 @@ import os
 import time
 import glob
 
-@njit(cache=True)
+@njit
 def _get_neighbors(x, y, h, w):
     moves = [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]
     buf = np.empty((8, 2), dtype=np.int32)
@@ -21,7 +21,7 @@ def _get_neighbors(x, y, h, w):
     return buf[:count]
 
 
-@njit(cache=True)
+@njit
 def _compute_scores(neigh, pheromone, edges, grad, alpha, beta):
     scores = np.empty(len(neigh), dtype=np.float32)
     for i in range(len(neigh)):
@@ -32,7 +32,7 @@ def _compute_scores(neigh, pheromone, edges, grad, alpha, beta):
     return scores
 
 
-@njit(cache=True)
+@njit
 def _roulette(scores):
     total = scores.sum()
     if total == 0.0:
@@ -46,11 +46,11 @@ def _roulette(scores):
     return len(scores) - 1
 
 
-@njit(cache=True, parallel=True)
+@njit(parallel=True)
 def run_ants(edges, grad, pheromone, edge_ys, edge_xs,
              n_ants, n_steps, alpha, beta):
     """Run all the ants in parallel.
-     Return: delta_pheromone (accumulation of the trail left by each ant)"""
+    Return: delta_pheromone (accumulation of the trail left by each ant)"""
     h, w = edges.shape
     delta = np.zeros_like(pheromone)
     n_edge = len(edge_xs)
@@ -126,7 +126,7 @@ def read_params():
 # GÖRÜNTÜ ÖN İŞLEME
 # ──────────────────────────────────────────────
 
-MAX_DIM = 640  # büyük resimleri yeniden boyutlandır
+MAX_DIM = 640
 
 def preprocess(frame, blur_k, canny_lo, canny_hi):
     """Convert to grayscale, blur, compute edges and gradients."""
@@ -156,7 +156,7 @@ def resize_if_needed(frame):
 # ──────────────────────────────────────────────
 
 def build_result(pheromone, thresh_val):
-    """Visualize the pheromone matrix and create a binary edge map by thresholding"""
+    """Visualize the pheromone matrix and create a binary edge map by thresholding."""
     vis = cv2.GaussianBlur(pheromone, (5, 5), 0)
     vis = cv2.normalize(vis, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     _, vis_bin = cv2.threshold(vis, thresh_val, 255, cv2.THRESH_BINARY)
@@ -164,29 +164,57 @@ def build_result(pheromone, thresh_val):
 
 
 def build_overlay(frame, vis_bin, ov_alpha):
-    """Create an overlay visualization by coloring the detected edges and blending with the original image"""
+    """Create an overlay visualization by coloring the detected edges and blending with the original image."""
     edge_color = np.zeros_like(frame)
-    edge_color[vis_bin > 0] = (0, 255, 80)   # parlak yeşil kenarlar
+    edge_color[vis_bin > 0] = (0, 255, 80)
     result = cv2.addWeighted(frame, 1.0, edge_color, ov_alpha, 0)
     return result
 
 
-def draw_status(img, iteration, max_iter, elapsed, n_ants, paused):
-    """Draw a semi-transparent status box with current parameters and instructions"""
+def draw_status(img, iteration, max_iter, elapsed, n_ants, paused, finished):
+    """Draw a semi-transparent status box with current parameters and instructions."""
     overlay = img.copy()
-    cv2.rectangle(overlay, (0,0), (300, 95), (0,0,0), -1)
+    cv2.rectangle(overlay, (0, 0), (300, 115), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.45, img, 0.55, 0, img)
     progress = int((iteration / max(max_iter, 1)) * 100)
-    state_txt = "DURAKLATILDI" if paused else f"Iterasyon: {iteration}/{max_iter}"
+
+    if finished:
+        state_txt = "TAMAMLANDI - s=kaydet  r=sifirla  q=cik"
+    elif paused:
+        state_txt = "DURAKLATILDI (Space=devam)"
+    else:
+        state_txt = f"Iterasyon: {iteration}/{max_iter}"
+
     lines = [
         state_txt,
         f"Ilerleme: %{progress}",
         f"Sure: {elapsed:.1f}s   Karinca: {n_ants}",
         "r=sifirla  s=kaydet  Space=duraklat",
+        "Sol/Sag ok: onceki/sonraki resim",
     ]
     for i, txt in enumerate(lines):
-        cv2.putText(img, txt, (8, 20 + i*19),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (180,230,180), 1, cv2.LINE_AA)
+        cv2.putText(img, txt, (8, 20 + i * 19),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 230, 180), 1, cv2.LINE_AA)
+
+
+# ──────────────────────────────────────────────
+# OK TUŞU — PLATFORM BAĞIMSIZ ÇÖZÜM
+# ──────────────────────────────────────────────
+
+def is_left_arrow(key_raw):
+    """
+    BUG FIX: ok tuşu keycodeları platform'a göre değişir.
+    Windows'ta waitKey(1) & 0xFF her zaman 0 döndürür (yüksek byte kaybolur).
+    Çözüm: raw keycode'u (mask uygulanmamış) kontrol et.
+    Linux : sol=65361, sağ=65363
+    Windows: sol=2424832, sağ=2555904
+    Hem Linux hem Windows'ta çalışır.
+    """
+    return key_raw in (65361, 2424832, 81)  # 81 = eski fallback
+
+
+def is_right_arrow(key_raw):
+    return key_raw in (65363, 2555904, 83)  # 83 = eski fallback
 
 
 # ──────────────────────────────────────────────
@@ -194,15 +222,22 @@ def draw_status(img, iteration, max_iter, elapsed, n_ants, paused):
 # ──────────────────────────────────────────────
 
 def process_image(frame, save_prefix="aco_result"):
-    """Process a single image with ACO"""
+    """Process a single image with ACO."""
     frame = resize_if_needed(frame)
     h, w  = frame.shape[:2]
 
-    pheromone = np.zeros((h, w), np.float32)
-    iteration = 0
-    paused    = False
-    t_start   = time.time()
-    last_params = None  # parametre değişimini izle
+    pheromone   = np.zeros((h, w), np.float32)
+    iteration   = 0
+    paused      = False
+    finished    = False   # BUG FIX: tamamlanma durumunu takip et
+    t_start     = time.time()
+    last_params = None
+
+    edges, grad = preprocess(frame, 5, 60, 140)
+    eys = np.where(edges > 0)[0].astype(np.int32)
+    exs = np.where(edges > 0)[1].astype(np.int32)
+    cv2.imshow(WIN_ORIG,  frame)
+    cv2.imshow(WIN_CANNY, (edges * 255).astype(np.uint8))
 
     while True:
         params = read_params()
@@ -216,22 +251,33 @@ def process_image(frame, save_prefix="aco_result"):
             eys = np.where(edges > 0)[0].astype(np.int32)
             exs = np.where(edges > 0)[1].astype(np.int32)
             pheromone[:] = 0
-            iteration = 0
-            t_start = time.time()
-            last_params = preproc_key
-
+            iteration    = 0
+            finished     = False
+            t_start      = time.time()
+            last_params  = preproc_key
             cv2.imshow(WIN_ORIG,  frame)
             cv2.imshow(WIN_CANNY, (edges * 255).astype(np.uint8))
 
+        # BUG FIX: max_iter trackbar'dan küçültülünce sıkışmayı önle
+        if iteration > max_iter:
+            iteration = max_iter
+
         # Bir iterasyon çalıştır
-        if not paused and iteration < max_iter:
-            delta = run_ants(edges, grad, pheromone,
-                             eys, exs, n_ants, n_steps, alpha, beta)
-            pheromone = (pheromone + delta) * (1.0 - evap)
-            max_ph = pheromone.max()
-            if max_ph > 5000:
-                pheromone /= max_ph
-            iteration += 1
+        if not paused and not finished:
+            if iteration < max_iter:
+                delta = run_ants(edges, grad, pheromone,
+                                 eys, exs, n_ants, n_steps, alpha, beta)
+                pheromone = (pheromone + delta) * (1.0 - evap)
+                max_ph = pheromone.max()
+                if max_ph > 5000:
+                    pheromone /= max_ph
+                iteration += 1
+            else:
+                # BUG FIX: tamamlandığında sonsuz döngüye girmek yerine
+                # finished=True set et ve kullanıcı girdisi bekle
+                finished = True
+                print(f"Tamamlandı: {max_iter} iterasyon. "
+                      f"s=kaydet | r=sifirla | Space=devam | q=cik")
 
         # Görselleştir
         vis_bin = build_result(pheromone, thresh_val)
@@ -239,20 +285,26 @@ def process_image(frame, save_prefix="aco_result"):
         elapsed = time.time() - t_start
 
         frame_disp = frame.copy()
-        draw_status(frame_disp, iteration, max_iter, elapsed, n_ants, paused)
+        draw_status(frame_disp, iteration, max_iter, elapsed, n_ants, paused, finished)
 
         cv2.imshow(WIN_ACO,     vis_bin)
         cv2.imshow(WIN_OVERLAY, overlay)
         cv2.imshow(WIN_ORIG,    frame_disp)
 
-        key = cv2.waitKey(1) & 0xFF
+        # BUG FIX: raw keycode al (0xFF mask YOK) → ok tuşları her platformda çalışır
+        key_raw = cv2.waitKey(1)
+        key     = key_raw & 0xFF
+
         if key == ord('q'):
             return 'quit'
+
         elif key == ord('r'):
             pheromone[:] = 0
-            iteration = 0
-            t_start = time.time()
+            iteration    = 0
+            finished     = False
+            t_start      = time.time()
             print("Feromon sıfırlandı.")
+
         elif key == ord('s'):
             ts = int(time.time())
             os.makedirs("aco_output", exist_ok=True)
@@ -260,28 +312,34 @@ def process_image(frame, save_prefix="aco_result"):
             cv2.imwrite(f"aco_output/{save_prefix}_aco_{ts}.png",     vis_bin)
             cv2.imwrite(f"aco_output/{save_prefix}_overlay_{ts}.png", overlay)
             print(f"Kaydedildi: aco_output/{save_prefix}_*_{ts}.png")
-        elif key == ord(' '):
-            paused = not paused
-            print("Duraklatıldı." if paused else "Devam ediyor.")
-        elif key == 81:   # Sol ok → önceki resim
-            return 'prev'
-        elif key == 83:   # Sağ ok → sonraki resim
-            return 'next'
 
-        # Bitti bildirimi
-        if iteration >= max_iter and not paused:
-            paused = True
-            print(f"Tamamlandı: {max_iter} iterasyon. Space ile devam, r ile sıfırla.")
+        elif key == ord(' '):
+            if finished:
+                # Space ile devam: sıfırla ve yeniden başlat
+                pheromone[:] = 0
+                iteration    = 0
+                finished     = False
+                t_start      = time.time()
+                print("Yeniden başlatıldı.")
+            else:
+                paused = not paused
+                print("Duraklatıldı." if paused else "Devam ediyor.")
+
+        elif is_left_arrow(key_raw):
+            return 'prev'
+
+        elif is_right_arrow(key_raw):
+            return 'next'
 
 
 # ──────────────────────────────────────────────
-# DOSYA SEÇİM YARDIMCISı
+# DOSYA SEÇİM YARDIMCISI
 # ──────────────────────────────────────────────
 
 SUPPORTED_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp")
 
 def collect_images(path):
-    """Given a path, return a list of image file paths. If it's a directory, collect all supported images. If it's a file, return it if supported."""
+    """Given a path, return a list of image file paths."""
     if os.path.isdir(path):
         files = []
         for ext in SUPPORTED_EXT:
@@ -296,7 +354,7 @@ def collect_images(path):
 
 def pick_file_interactive():
     """Prompt the user to enter a file or directory path for processing."""
-    print("Enter the image file and folder path:")
+    print("Enter the image file or folder path:")
     path = input(">>> ").strip().strip('"').strip("'")
     return path
 
@@ -306,18 +364,22 @@ def pick_file_interactive():
 # ──────────────────────────────────────────────
 
 def warmup_numba():
-    """Run a quick dummy ACO to trigger Numba JIT compilation before processing real images"""
+    """
+    BUG FIX: cache=True kaldırıldı — cache'li fonksiyonlar modül dosyasından
+    çağrılmadığında RuntimeError fırlatır (__pycache__ bulunamaz).
+    warmup, JIT derlemesini tetikler; derleme süresi sadece ilk çalıştırmada yaşanır.
+    """
+    print("Numba JIT derleniyor, lütfen bekleyin...")
     d_e = np.zeros((10, 10), np.float32)
     d_g = np.zeros((10, 10), np.float32)
-    d_p = np.ones((10,  10), np.float32)
+    d_p = np.ones((10, 10),  np.float32)
     ys  = np.zeros(1, np.int32)
     xs  = np.zeros(1, np.int32)
     run_ants(d_e, d_g, d_p, ys, xs, 2, 2, 1.0, 3.0)
-    print("Numba JIT derlendi.")
+    print("Numba JIT hazır.")
 
 
 def main():
-    # Giriş kaynağını belirle
     if len(sys.argv) > 1:
         input_path = sys.argv[1]
     else:
@@ -355,13 +417,14 @@ def main():
         elif action == 'prev':
             idx = max(0, idx - 1)
         else:
-            # Tamamlandı → otomatik olarak sonrakine geç (klasör modunda)
             if len(image_paths) > 1:
-                print("Sonraki resme geçmek için → tuşuna, çıkmak için q'ya bas.")
-                key = cv2.waitKey(0) & 0xFF
+                print("Sonraki resim için → , çıkmak için q.")
+                # BUG FIX: raw keycode ile ok tuşu kontrolü
+                key_raw = cv2.waitKey(0)
+                key     = key_raw & 0xFF
                 if key == ord('q'):
                     break
-                elif key == 81:
+                elif is_left_arrow(key_raw):
                     idx = max(0, idx - 1)
                 else:
                     idx += 1
@@ -370,6 +433,7 @@ def main():
 
     cv2.destroyAllWindows()
     print("Çıkıldı.")
+
 
 if __name__ == "__main__":
     main()

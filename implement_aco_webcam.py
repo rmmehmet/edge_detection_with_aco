@@ -16,7 +16,6 @@ def _compute_scores(neigh, pheromone, edges, grad, alpha, beta):
         scores[i] = (pher ** alpha) * (heuristic ** beta + 1e-6)
     return scores
 
-
 @njit(cache=True)
 def _get_neighbors(x, y, h, w):
     """Return an 8-neighborhood pixel list
@@ -33,7 +32,6 @@ def _get_neighbors(x, y, h, w):
             count += 1
     return buf[:count]
 
-
 @njit(cache=True)
 def _roulette(scores):
     """Probabilistic choice (roulette wheel)
@@ -48,7 +46,6 @@ def _roulette(scores):
         if cumsum >= r:
             return i
     return len(scores) - 1
-
 
 @njit(cache=True, parallel=True)
 def run_ants(edges, grad, pheromone, edge_ys, edge_xs,
@@ -82,15 +79,14 @@ def run_ants(edges, grad, pheromone, edge_ys, edge_xs,
 
     return delta
 
-
 # ──────────────────────────────────────────────
-# TRACKBAR PENCERE KURULUMU
+# TRACKBAR WINDOW SETUP
 # ──────────────────────────────────────────────
 
-WIN_CTRL  = "Parametreler"
-WIN_ORIG  = "Orijinal"
-WIN_CANNY = "Canny (baslangic)"
-WIN_ACO   = "ACO Kenar Haritasi"
+WIN_CTRL  = "Parameters"
+WIN_ORIG  = "Original"
+WIN_CANNY = "Canny (initial)"
+WIN_ACO   = "ACO Edge Map"
 
 def nothing(_):
     pass
@@ -104,35 +100,33 @@ def setup_windows():
     cv2.resizeWindow(WIN_CTRL, 400, 320)
 
     # Trackbar'lar
-    cv2.createTrackbar("Karinça sayisi",  WIN_CTRL, 40,  200, nothing)
-    cv2.createTrackbar("Adim sayisi",     WIN_CTRL, 30,  100, nothing)
+    cv2.createTrackbar("Number of Ants",  WIN_CTRL, 40,  200, nothing)
+    cv2.createTrackbar("Number of Steps",     WIN_CTRL, 30,  100, nothing)
     cv2.createTrackbar("Alpha x10",       WIN_CTRL, 10,  50,  nothing)  # 1.0
     cv2.createTrackbar("Beta x10",        WIN_CTRL, 30,  100, nothing)  # 3.0
-    cv2.createTrackbar("Buharlaşma x100", WIN_CTRL, 10,  99,  nothing)  # 0.10
-    cv2.createTrackbar("Canny esik1",     WIN_CTRL, 60,  255, nothing)
-    cv2.createTrackbar("Canny esik2",     WIN_CTRL, 140, 255, nothing)
-    cv2.createTrackbar("Esikleme",        WIN_CTRL, 50,  255, nothing)
-    cv2.createTrackbar("Bulaniklik",      WIN_CTRL, 5,   15,  nothing)  # GaussianBlur çekirdek boyutu
+    cv2.createTrackbar("Evaporation x100", WIN_CTRL, 10,  99,  nothing)  # 0.10
+    cv2.createTrackbar("Canny threshold1",     WIN_CTRL, 60,  255, nothing)
+    cv2.createTrackbar("Canny threshold2",     WIN_CTRL, 140, 255, nothing)
+    cv2.createTrackbar("Threshold",        WIN_CTRL, 50,  255, nothing)
+    cv2.createTrackbar("Blur",      WIN_CTRL, 5,   15,  nothing)  # GaussianBlur kernel size
 
 def read_params():
-    n_ants     = max(1,  cv2.getTrackbarPos("Karinça sayisi",  WIN_CTRL))
-    n_steps    = max(1,  cv2.getTrackbarPos("Adim sayisi",     WIN_CTRL))
+    n_ants     = max(1,  cv2.getTrackbarPos("Number of Ants",  WIN_CTRL))
+    n_steps    = max(1,  cv2.getTrackbarPos("Number of Steps",     WIN_CTRL))
     alpha      = max(0.1, cv2.getTrackbarPos("Alpha x10",       WIN_CTRL) / 10.0)
     beta       = max(0.1, cv2.getTrackbarPos("Beta x10",        WIN_CTRL) / 10.0)
-    evap       = max(0.01, cv2.getTrackbarPos("Buharlaşma x100", WIN_CTRL) / 100.0)
+    evap       = max(0.01, cv2.getTrackbarPos("Evaporation x100", WIN_CTRL) / 100.0)
     canny_lo   = cv2.getTrackbarPos("Canny esik1",     WIN_CTRL)
     canny_hi   = max(canny_lo + 1, cv2.getTrackbarPos("Canny esik2", WIN_CTRL))
-    thresh_val = cv2.getTrackbarPos("Esikleme",        WIN_CTRL)
+    thresh_val = cv2.getTrackbarPos("Threshold",        WIN_CTRL)
     blur_k     = cv2.getTrackbarPos("Bulaniklik",      WIN_CTRL)
-    blur_k     = blur_k if blur_k % 2 == 1 else blur_k + 1  # tek sayı olmalı
+    blur_k     = blur_k if blur_k % 2 == 1 else blur_k + 1  
     blur_k     = max(3, blur_k)
     return n_ants, n_steps, alpha, beta, evap, canny_lo, canny_hi, thresh_val, blur_k
 
-
 # ──────────────────────────────────────────────
-# OVERLAY: FPS + PARAMETRE BİLGİSİ
+# OVERLAY: FPS + PARAMETER DISPLAY
 # ──────────────────────────────────────────────
-
 def draw_overlay(img, fps, n_ants, n_steps, alpha, beta, evap):
     overlay = img.copy()
     cv2.rectangle(overlay, (0,0), (310, 115), (0,0,0), -1)
@@ -148,11 +142,9 @@ def draw_overlay(img, fps, n_ants, n_steps, alpha, beta, evap):
         cv2.putText(img, txt, (8, 20 + i*19),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, (200,230,200), 1, cv2.LINE_AA)
 
-
 # ──────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────
-
 def main():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -168,9 +160,8 @@ def main():
     fps = 0.0
     save_dir = "screenshots"
 
-    print("ACO Webcam başlatıldı. q=çık | r=sıfırla | s=kaydet")
+    print("ACO Webcam started. q=exit | r=reset | s=save")
 
-    # Numba'yı ısıt (ilk çağrı derler)
     dummy_e = np.zeros((10,10), np.float32)
     dummy_g = np.zeros((10,10), np.float32)
     dummy_p = np.ones((10,10),  np.float32)
@@ -256,7 +247,7 @@ def main():
             break
         elif key == ord('r'):
             pheromone[:] = 0
-            print("Feromon haritası sıfırlandı.")
+            print("Pheromone map reset.")
         elif key == ord('s'):
             os.makedirs(save_dir, exist_ok=True)
             ts = int(time.time())
@@ -267,7 +258,6 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     main()
