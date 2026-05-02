@@ -262,6 +262,7 @@ Performance scales with image resolution and ant/step count. For HD resolution, 
 ## References
 
 - Y. Bi, B. Xue, P. Mesejo, S. Cagnoni, and M. Zhang, “A Survey on Evolutionary Computation for Computer Vision and Image Analysis: Past, Present, and Future Trends,” IEEE, 2020.
+https://arxiv.org/pdf/2209
 - OpenCV Documentation — [docs.opencv.org](https://docs.opencv.org)
 - Numba Documentation — [numba.pydata.org](https://numba.pydata.org)
 
